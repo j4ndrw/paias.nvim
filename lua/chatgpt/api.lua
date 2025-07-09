@@ -19,82 +19,7 @@ function Api.chat_completions(custom_params, cb, should_stop)
   if params.model == "<dynamic>" then
     params.model = openai_params.model
   end
-  local stream = params.stream or false
-  if stream then
-    local raw_chunks = ""
-    local state = "START"
-
-    cb = vim.schedule_wrap(cb)
-
-    local extra_curl_params = Config.options.extra_curl_params
-    local args = {
-      "--silent",
-      "--show-error",
-      "--no-buffer",
-      Api.CHAT_COMPLETIONS_URL,
-      "-H",
-      "Content-Type: application/json",
-      "-H",
-      Api.AUTHORIZATION_HEADER,
-      "-d",
-      vim.json.encode(params),
-    }
-
-    if extra_curl_params ~= nil then
-      for _, param in ipairs(extra_curl_params) do
-        table.insert(args, param)
-      end
-    end
-
-    Api.exec(
-      "curl",
-      args,
-      function(chunk)
-        local ok, json = pcall(vim.json.decode, chunk)
-        if ok and json ~= nil then
-          if json.error ~= nil then
-            cb(json.error.message, "ERROR")
-            return
-          end
-        end
-        for line in chunk:gmatch("[^\n]+") do
-          local raw_json = string.gsub(line, "^data: ", "")
-          if raw_json == "[DONE]" then
-            cb(raw_chunks, "END")
-          else
-            ok, json = pcall(vim.json.decode, raw_json, {
-              luanil = {
-                object = true,
-                array = true,
-              },
-            })
-            if ok and json ~= nil then
-              if
-                json
-                and json.choices
-                and json.choices[1]
-                and json.choices[1].delta
-                and json.choices[1].delta.content
-              then
-                cb(json.choices[1].delta.content, state)
-                raw_chunks = raw_chunks .. json.choices[1].delta.content
-                state = "CONTINUE"
-              end
-            end
-          end
-        end
-      end,
-      function(err, _)
-        cb(err, "ERROR")
-      end,
-      should_stop,
-      function()
-        cb(raw_chunks, "END")
-      end
-    )
-  else
-    Api.make_call(Api.CHAT_COMPLETIONS_URL, params, cb)
-  end
+  Api.make_call(Api.CHAT_COMPLETIONS_URL, params, cb)
 end
 
 function Api.edits(custom_params, cb)
@@ -157,31 +82,15 @@ Api.handle_response = vim.schedule_wrap(function(response, exit_code, cb)
   local result = table.concat(response:result(), "\n")
   local json = vim.fn.json_decode(result)
   if json == nil then
-    cb("No Response.")
+    cb("No Response.", "END")
   elseif json.error then
     cb("// API ERROR: " .. json.error.message)
   else
-    local message = json.choices[1].message
+    local message = json[1].message
     if message ~= nil then
-      local message_response
-      local first_message = json.choices[1].message
-      if first_message.function_call then
-        message_response = vim.fn.json_decode(first_message.function_call.arguments)
-      else
-        message_response = first_message.content
-      end
-      if (type(message_response) == "string" and message_response ~= "") or type(message_response) == "table" then
-        cb(message_response, json.usage)
-      else
-        cb("...")
-      end
+      cb(message, "END")
     else
-      local response_text = json.choices[1].text
-      if type(response_text) == "string" and response_text ~= "" then
-        cb(response_text, json.usage)
-      else
-        cb("...")
-      end
+      cb("No response", "END")
     end
   end
 end)
